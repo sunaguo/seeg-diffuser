@@ -1,40 +1,40 @@
-import sys
+import sys, os
 sys.path.append('vdvae')
 import torch
 import numpy as np
 #from mpi4py import MPI
-import socket
+# import socket
 import argparse
-import os
-import json
-import subprocess
-from hps import Hyperparams, parse_args_and_update_hparams, add_vae_arguments
-from utils import (logger,
-                   local_mpi_rank,
-                   mpi_size,
-                   maybe_download,
-                   mpi_rank)
-from data import mkdir_p
-from contextlib import contextmanager
-import torch.distributed as dist
+# import os
+# import json
+# import subprocess
+# from hps import Hyperparams, parse_args_and_update_hparams, add_vae_arguments
+# from utils import (logger,
+#                    local_mpi_rank,
+#                    mpi_size,
+#                    maybe_download,
+#                    mpi_rank)
+# from data import mkdir_p
+# from contextlib import contextmanager
+# import torch.distributed as dist
 #from apex.optimizers import FusedAdam as AdamW
 from vae import VAE
-from torch.nn.parallel.distributed import DistributedDataParallel
-from train_helpers import restore_params
+# from torch.nn.parallel.distributed import DistributedDataParallel
+# from train_helpers import restore_params
 from image_utils import *
 from model_utils import *
 from torch.utils.data import DataLoader, Dataset
 from PIL import Image
 import torchvision.transforms as T
-import pickle
+# import pickle
 
 import argparse
 parser = argparse.ArgumentParser(description='Argument Parser')
-parser.add_argument("-sub", "--sub",help="Subject Number",default=1)
+# parser.add_argument("-sub", "--sub",help="Subject Number",default=1)
 parser.add_argument("-bs", "--bs",help="Batch Size",default=30)
 args = parser.parse_args()
-sub=int(args.sub)
-assert sub in [1,2,5,7]
+# sub=int(args.sub)
+# assert sub in [1,2,5,7]
 batch_size=int(args.bs)
 
 print('Libs imported')
@@ -53,35 +53,45 @@ print('Models is Loading')
 ema_vae = load_vaes(H)
 
   
-class batch_generator_external_images(Dataset):
+# class batch_generator_external_images(Dataset):
 
-    def __init__(self, data_path):
-        self.data_path = data_path
-        self.im = np.load(data_path).astype(np.uint8)
-
-
-    def __getitem__(self,idx):
-        img = Image.fromarray(self.im[idx])
-        img = T.functional.resize(img,(64,64))
-        img = torch.tensor(np.array(img)).float()
-        #img = img/255
-        #img = img*2 - 1
-        return img
-
-    def __len__(self):
-        return  len(self.im)
+#     def __init__(self, data_path):
+#         self.data_path = data_path
+#         # self.im = np.load(data_path).astype(np.uint8)
+#         self.im = np.load(data_path).astype(np.uint8).transpose(0,2,3,1)
 
 
+#     def __getitem__(self,idx):
+#         # img = Image.fromarray(self.im[idx])
+#         # img = T.functional.resize(img,(64,64))
+#         # img = torch.tensor(np.array(img)).float()
+#         #img = img/255
+#         #img = img*2 - 1
 
-image_path = 'data/processed_data/subj{:02d}/nsd_test_stim_sub{}.npy'.format(sub,sub)
+#         img = self.im[idx]
+#         img = torch.tensor(img).float()
+
+#         return img
+
+#     def __len__(self):
+#         return  len(self.im)
+from scripts.new_utils import batch_generator_external_images
+
+print("loading images")
+# image_path = 'data/processed_data/subj{:02d}/nsd_test_stim_sub{}.npy'.format(sub,sub)
+# test_images = batch_generator_external_images(data_path = image_path)
+# testloader = DataLoader(test_images,batch_size,shuffle=False)
+image_path = f"ecog_data/cars-2/resized-64x64_frame-1-2397.npy"
 test_images = batch_generator_external_images(data_path = image_path)
 testloader = DataLoader(test_images,batch_size,shuffle=False)
 
+print("generating latents")
 test_latents = []
 for i,x in enumerate(testloader):
-  data_input, target = preprocess_fn(x)
-  with torch.no_grad():
-        print(i*batch_size)
+    data_input, target = preprocess_fn(x)
+    with torch.no_grad():
+        if i*batch_size % 100 == 0:
+            print(i*batch_size)
         activations = ema_vae.encoder.forward(data_input)
         px_z, stats = ema_vae.decoder.forward(activations, get_latents=True)
         #recons = ema_vae.decoder.out_net.sample(px_z)
@@ -92,11 +102,26 @@ for i,x in enumerate(testloader):
         #stats_all.append(stats)
         #imshow(imgrid(recons, cols=batch_size,pad=20))
         #imshow(imgrid(test_images[i*batch_size : (i+1)*batch_size], cols=batch_size,pad=20))
-test_latents = np.concatenate(test_latents)      
+    break
+# test_latents = np.concatenate(test_latents)     
 
-pred_latents = np.load('data/predicted_features/subj{:02d}/nsd_vdvae_nsdgeneral_pred_sub{}_31l_alpha50k.npy'.format(sub,sub))
+from scripts.reconstruct_config import *
+from new_utils import load_seeg_resp, load_train_test_splits
+
+## load cval splits
+_, train_inds, test_inds = load_train_test_splits(nfolds, split_ii)
+
+print("loading predicted latents")
+# pred_latents = np.load('data/predicted_features/subj{:02d}/nsd_vdvae_nsdgeneral_pred_sub{}_31l_alpha50k.npy'.format(sub,sub))
+layer_sizes = np.load("vdvae/layer_sizes.npy")
+pred_latents = []
+for lii in range(len(layer_sizes)):
+    pred_latents.append(np.load(f"ecog_data/predicted_features/vdvae/{out_config}/cars-2_vdvae_nsdgeneral_pred_alpha50k_layer-{lii}.npy"))
+pred_latents = np.hstack(pred_latents)
+print("pred_latents:", pred_latents.shape)
 ref_latent = stats
 
+print("running prediction through vdvae")
 # Transfor latents from flattened representation to hierarchical
 def latent_transformation(latents, ref):
   layer_dims = np.array([2**4,2**4,2**8,2**8,2**8,2**8,2**10,2**10,2**10,2**10,2**10,2**10,2**10,2**10,2**12,2**12,2**12,2**12,2**12,2**12,2**12,2**12,2**12,2**12,2**12,2**12,2**12,2**12,2**12,2**12,2**14])
@@ -109,8 +134,9 @@ def latent_transformation(latents, ref):
     transformed_latents.append(t_lat.reshape(len(latents),c,h,w))
   return transformed_latents
 
-idx = range(len(test_images))
-input_latent = latent_transformation(pred_latents[idx],ref_latent)
+# idx = range(len(test_images))
+# input_latent = latent_transformation(pred_latents[idx],ref_latent)
+input_latent = latent_transformation(pred_latents,ref_latent)
 
   
 def sample_from_hier_latents(latents,sample_ids):
@@ -123,7 +149,10 @@ def sample_from_hier_latents(latents,sample_ids):
 
 #samples = []
 
-for i in range(int(np.ceil(len(test_images)/batch_size))):
+if not os.path.exists(f"results/vdvae/{out_config}"):
+   os.makedirs(f"results/vdvae/{out_config}")
+
+for i in range(int(np.ceil(len(pred_latents)/batch_size))):
   print(i*batch_size)
   samp = sample_from_hier_latents(input_latent,range(i*batch_size,(i+1)*batch_size))
   px_z = ema_vae.decoder.forward_manual_latents(len(samp[0]), samp, t=None)
@@ -132,7 +161,12 @@ for i in range(int(np.ceil(len(test_images)/batch_size))):
   for j in range(len(sample_from_latent)):
       im = sample_from_latent[j]
       im = Image.fromarray(im)
-      im = im.resize((512,512),resample=3)
-      im.save('results/vdvae/subj{:02d}/{}.png'.format(sub,i*batch_size+j))
+      im = im.resize((534, 534),resample=3)
+      
+      ## change this to match scene idx
+      im.save(f'results/vdvae/{out_config}/{test_inds[i*batch_size+j]}.png')
+
+  #     break
+  # break
       
 

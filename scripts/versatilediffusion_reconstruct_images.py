@@ -1,12 +1,12 @@
 import sys
 sys.path.append('versatile_diffusion')
-import os
-import os.path as osp
+# import os
+# import os.path as osp
 import PIL
 from PIL import Image
-from pathlib import Path
+# from pathlib import Path
 import numpy as np
-import numpy.random as npr
+# import numpy.random as npr
 
 import torch
 import torchvision.transforms as tvtrans
@@ -14,24 +14,27 @@ from lib.cfg_helper import model_cfg_bank
 from lib.model_zoo import get_model
 from lib.model_zoo.ddim_vd import DDIMSampler_VD
 from lib.experiments.sd_default import color_adjust, auto_merge_imlist
-from torch.utils.data import DataLoader, Dataset
+# from torch.utils.data import DataLoader, Dataset
 
-from lib.model_zoo.vd import VD
-from lib.cfg_holder import cfg_unique_holder as cfguh
-from lib.cfg_helper import get_command_line_args, cfg_initiates, load_cfg_yaml
-import matplotlib.pyplot as plt
-from skimage.transform import resize, downscale_local_mean
+# from lib.model_zoo.vd import VD
+# from lib.cfg_holder import cfg_unique_holder as cfguh
+# from lib.cfg_helper import get_command_line_args, cfg_initiates, load_cfg_yaml
+# import matplotlib.pyplot as plt
+# from skimage.transform import resize, downscale_local_mean
 
 import argparse
 parser = argparse.ArgumentParser(description='Argument Parser')
-parser.add_argument("-sub", "--sub",help="Subject Number",default=1)
+# parser.add_argument("-sub", "--sub",help="Subject Number",default=1)
 parser.add_argument("-diff_str", "--diff_str",help="Diffusion Strength",default=0.75)
 parser.add_argument("-mix_str", "--mix_str",help="Mixing Strength",default=0.4)
 args = parser.parse_args()
-sub=int(args.sub)
-assert sub in [1,2,5,7]
+# sub=int(args.sub)
+# assert sub in [1,2,5,7]
 strength = float(args.diff_str)
 mixing = float(args.mix_str)
+
+from scripts.reconstruct_config import *
+from new_utils import load_train_test_splits
 
 
 def regularize_image(x):
@@ -73,11 +76,14 @@ sampler = sampler(net)
 #sampler.model.cuda(1)
 batch_size = 1
 
-pred_text = np.load('data/predicted_features/subj{:02d}/nsd_cliptext_predtest_nsdgeneral.npy'.format(sub))
+print("loading predicted feats")
+pred_text = np.load(f'ecog_data/predicted_features/cliptext/{out_config}/allpreds.npy')
 pred_text = torch.tensor(pred_text).half().cuda(1)
 
-pred_vision = np.load('data/predicted_features/subj{:02d}/nsd_clipvision_predtest_nsdgeneral.npy'.format(sub))
+pred_vision = np.load(f'ecog_data/predicted_features/clipvision/{out_config}/allpreds.npy')
 pred_vision = torch.tensor(pred_vision).half().cuda(1)
+
+_, train_inds, test_inds = load_train_test_splits(split_ii)
 
 
 n_samples = 1
@@ -89,9 +95,10 @@ ctype = 'prompt'
 net.autokl.half()
 
 torch.manual_seed(0)
-for im_id in range(len(pred_vision)):
+for im_id, fid in enumerate(test_inds):
+    print(f"image {im_id}/{len(test_inds)}")
 
-    zim = Image.open('results/vdvae/subj{:02d}/{}.png'.format(sub,im_id))
+    zim = Image.open(f'results/vdvae/{out_config}/{im_id+1}.png')
    
     zim = regularize_image(zim)
     zin = zim*2 - 1
@@ -161,6 +168,6 @@ for im_id in range(len(pred_vision)):
         x = [tvtrans.ToPILImage()(xi) for xi in x]
     
 
-    x[0].save('results/versatile_diffusion/subj{:02d}/{}.png'.format(sub,im_id))
+    x[0].save(f'results/versatile_diffusion/{fid}.png')
       
 

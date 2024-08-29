@@ -9,9 +9,4 @@ __pycache__/
 *.h5
 *.csv
 
-# ecog_data/extracted_features/*
-# ecog_data/predicted_features/*
-# ecog_data/regression_weights/*
-# ecog_data/inflated_brain_plotting_files/*
-# results/vdvae/*
-# results/versatile_diffusion/*
+*_loop.py
